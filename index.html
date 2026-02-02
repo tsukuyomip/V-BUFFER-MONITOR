@@ -3,7 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>V-BUFFER Pro Monitor</title>
+    <title>V-BUFFER Ultra</title>
+    <!-- PWA Basic -->
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <link rel="apple-touch-icon" href="https://cdn-icons-png.flaticon.com/512/1082/1082844.png">
@@ -12,277 +13,273 @@
     <script src="https://unpkg.com/lucide@latest"></script>
     <style>
         :root { --sat: env(safe-area-inset-top); --sab: env(safe-area-inset-bottom); }
-        body { padding-top: var(--sat); padding-bottom: var(--sab); -webkit-tap-highlight-color: transparent; }
-        .recording-glow { box-shadow: 0 0 20px rgba(239, 68, 68, 0.6); }
-        .monitor-glow { box-shadow: 0 0 15px rgba(59, 130, 246, 0.4); }
+        /* bodyのoverflow-hiddenを削除して自然なスクロールを許可 */
+        body { 
+            padding-top: var(--sat); 
+            padding-bottom: var(--sab); 
+            -webkit-tap-highlight-color: transparent; 
+        }
+        .recording-ring { box-shadow: 0 0 30px rgba(239, 68, 68, 0.5); }
+        /* iOSのバウンススクロールを滑らかにする */
+        html { scroll-behavior: smooth; }
     </style>
 </head>
-<body class="bg-slate-950 text-slate-100 flex flex-col min-h-screen overflow-hidden">
+<body class="bg-slate-950 text-slate-100 min-h-screen font-sans">
 
-    <header class="p-6 flex justify-between items-center">
+    <!-- Headerをstickyにして常に上部に表示 -->
+    <header class="sticky top-0 p-6 flex justify-between items-center bg-slate-950/80 backdrop-blur-lg z-30 border-b border-white/5">
         <div class="flex items-center gap-3">
-            <div id="status-icon" class="p-2 bg-slate-800 rounded-2xl transition-all duration-500">
+            <div id="status-icon" class="p-2 bg-slate-800 rounded-2xl transition-all duration-700">
                 <i data-lucide="mic-off" class="w-6 h-6"></i>
             </div>
-            <h1 class="text-xl font-black tracking-tighter">V-BUFFER <span class="text-blue-500">MONITOR</span></h1>
+            <h1 class="text-xl font-black tracking-tighter">V-BUFFER <span class="text-blue-500">ULTRA</span></h1>
         </div>
         <div id="timer" class="hidden font-mono font-bold text-red-500 bg-red-500/10 px-3 py-1 rounded-full border border-red-500/20">
             00:00
         </div>
     </header>
 
-    <main class="flex-1 px-6 space-y-6 overflow-y-auto pb-24">
-        <!-- Visualizer Section -->
-        <div class="bg-slate-900 rounded-[2.5rem] p-6 border border-slate-800 shadow-2xl relative overflow-hidden">
-            <canvas id="waveform" class="w-full h-32 rounded-2xl mb-4 relative z-10"></canvas>
+    <main class="px-6 py-8 space-y-8">
+        <!-- Visualizer & Buffer Status -->
+        <div class="bg-slate-900/50 backdrop-blur-md rounded-[3rem] p-8 border border-white/5 shadow-2xl">
+            <canvas id="waveform" class="w-full h-32 rounded-2xl mb-6"></canvas>
             
-            <div id="monitor-label" class="absolute top-4 right-6 text-[10px] font-black text-blue-500/50 uppercase tracking-widest hidden">Live Monitoring</div>
-
-            <div class="space-y-2">
-                <div class="flex justify-between text-[10px] uppercase font-bold text-slate-500">
-                    <span>Buffer (15m Max)</span>
-                    <span id="buffer-stat">00:00</span>
+            <div class="space-y-3">
+                <div class="flex justify-between text-[10px] uppercase font-black text-slate-500 tracking-widest">
+                    <span>15-Min Buffer Health</span>
+                    <span id="buffer-stat">00:00 / 15:00</span>
                 </div>
-                <div class="h-1.5 bg-slate-800 rounded-full overflow-hidden">
-                    <div id="buffer-progress" class="h-full bg-blue-600 w-0 transition-all duration-300"></div>
+                <div class="h-2 bg-slate-800 rounded-full overflow-hidden">
+                    <div id="buffer-progress" class="h-full bg-gradient-to-r from-blue-600 to-blue-400 w-0 transition-all duration-300"></div>
                 </div>
             </div>
         </div>
 
-        <!-- Master Controls -->
-        <div class="grid grid-cols-1 gap-4">
-            <!-- Phase 1: Enable Mic -->
-            <button id="init-btn" class="w-full h-20 bg-blue-600 rounded-[2rem] font-bold text-xl shadow-lg active:scale-95 transition-all flex items-center justify-center gap-3">
-                <i data-lucide="power"></i> マイクを有効化
+        <!-- Master Switch -->
+        <div id="control-panel" class="space-y-4">
+            <button id="master-btn" class="w-full py-6 bg-blue-600 rounded-[2.5rem] font-black text-xl shadow-xl active:scale-95 transition-all flex items-center justify-center gap-3">
+                <i data-lucide="power"></i> システム起動
             </button>
-
-            <!-- Phase 2: Toggle Buffering (Hidden initially) -->
-            <button id="record-btn" class="hidden w-full h-20 bg-slate-800 rounded-[2rem] font-bold text-xl shadow-lg active:scale-95 transition-all flex items-center justify-center gap-3 border border-slate-700">
-                <i data-lucide="circle" class="fill-red-500 text-red-500"></i> バッファ録音開始
-            </button>
+            <p id="hint" class="text-center text-[10px] text-slate-500 font-bold uppercase tracking-tighter">
+                ※ 画面を閉じても録音を維持するように設計されています
+            </p>
         </div>
 
-        <!-- Clip Saving Options (Hidden until recording starts) -->
-        <div id="clip-controls" class="hidden animate-in fade-in slide-in-from-bottom-4 duration-500">
-            <p class="text-[10px] font-black text-slate-500 uppercase mb-3 ml-1">過去の時間を保存</p>
-            <div class="grid grid-cols-3 gap-3">
-                <button data-sec="15" class="clip-btn py-5 bg-slate-900 border border-slate-800 rounded-3xl font-bold text-xs active:bg-blue-600 transition-colors">15秒</button>
-                <button data-sec="30" class="clip-btn py-5 bg-slate-900 border border-slate-800 rounded-3xl font-bold text-xs active:bg-blue-600 transition-colors">30秒</button>
-                <button data-sec="60" class="clip-btn py-5 bg-slate-900 border border-slate-800 rounded-3xl font-bold text-xs active:bg-blue-600 transition-colors">1分</button>
-                <button data-sec="180" class="clip-btn py-5 bg-slate-900 border border-slate-800 rounded-3xl font-bold text-xs active:bg-blue-600 transition-colors">3分</button>
-                <button data-sec="300" class="clip-btn py-5 bg-slate-900 border border-slate-800 rounded-3xl font-bold text-xs active:bg-blue-600 transition-colors">5分</button>
-                <button data-sec="900" class="clip-btn py-5 bg-slate-900 border border-slate-800 rounded-3xl font-bold text-xs active:bg-blue-600 transition-colors">15分</button>
-            </div>
+        <!-- Save Slots -->
+        <div id="clip-controls" class="hidden grid grid-cols-3 gap-3 animate-in fade-in zoom-in duration-500">
+            <button data-sec="15" class="clip-btn py-5 bg-slate-900 border border-white/5 rounded-3xl font-black text-xs hover:bg-slate-800 active:bg-blue-600 transition-all">15s</button>
+            <button data-sec="30" class="clip-btn py-5 bg-slate-900 border border-white/5 rounded-3xl font-black text-xs hover:bg-slate-800 active:bg-blue-600 transition-all">30s</button>
+            <button data-sec="60" class="clip-btn py-5 bg-slate-900 border border-white/5 rounded-3xl font-black text-xs hover:bg-slate-800 active:bg-blue-600 transition-all">1m</button>
+            <button data-sec="180" class="clip-btn py-5 bg-slate-900 border border-white/5 rounded-3xl font-black text-xs hover:bg-slate-800 active:bg-blue-600 transition-all">3m</button>
+            <button data-sec="300" class="clip-btn py-5 bg-slate-900 border border-white/5 rounded-3xl font-black text-xs hover:bg-slate-800 active:bg-blue-600 transition-all">5m</button>
+            <button data-sec="900" class="clip-btn py-5 bg-slate-900 border border-white/5 rounded-3xl font-black text-xs hover:bg-slate-800 active:bg-blue-600 transition-all">15m</button>
         </div>
 
         <!-- History -->
-        <div id="history-container" class="space-y-4 pb-12">
-            <h2 class="text-[10px] font-black text-slate-500 uppercase ml-1">保存済みクリップ</h2>
-            <div id="history-list" class="space-y-4"></div>
+        <div id="history-container" class="space-y-4 pb-20">
+            <h2 class="text-[10px] font-black text-slate-600 uppercase tracking-widest ml-2">Clip History</h2>
+            <div id="history-list" class="space-y-4">
+                <!-- Clips go here -->
+            </div>
         </div>
     </main>
 
-    <!-- Modal -->
-    <div id="modal" class="fixed inset-0 bg-slate-950/90 backdrop-blur-xl flex items-center justify-center p-8 z-50 hidden">
-        <div class="bg-slate-900 border border-slate-800 rounded-[3rem] w-full max-w-sm p-8 shadow-2xl">
-            <h3 class="text-2xl font-black mb-1">保存</h3>
-            <p class="text-slate-400 text-sm mb-6">ファイル名を入力</p>
-            <input id="filename-input" type="text" class="w-full p-5 bg-slate-950 border border-slate-800 rounded-3xl mb-8 outline-none text-lg">
-            <div class="flex gap-3">
-                <button id="cancel-save" class="flex-1 py-5 bg-slate-800 rounded-3xl font-bold">戻る</button>
-                <button id="confirm-save" class="flex-1 py-5 bg-blue-600 rounded-3xl font-bold">保存</button>
+    <!-- Save Modal -->
+    <div id="modal" class="fixed inset-0 bg-slate-950/95 backdrop-blur-2xl flex items-center justify-center p-8 z-50 hidden">
+        <div class="bg-slate-900 border border-white/10 rounded-[3.5rem] w-full max-w-sm p-10 shadow-2xl">
+            <h3 class="text-2xl font-black mb-2 text-blue-500">Clip Captured</h3>
+            <p class="text-slate-400 text-sm mb-8">名前をつけて保存。</p>
+            <input id="filename-input" type="text" class="w-full p-5 bg-slate-950 border border-white/10 rounded-3xl mb-8 outline-none text-lg focus:border-blue-500 transition-colors">
+            <div class="flex gap-4">
+                <button id="cancel-save" class="flex-1 py-5 bg-slate-800 rounded-3xl font-bold">Discard</button>
+                <button id="confirm-save" class="flex-1 py-5 bg-blue-600 rounded-3xl font-bold">Save</button>
             </div>
         </div>
     </div>
 
-    <!-- Background Audio Hack -->
-    <audio id="silent-audio" loop muted><source src="data:audio/wav;base64,UklGRigAAABXQVZFRm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQQAAAAAAP8="></audio>
-
     <script>
+        const workletCode = `
+            class RecorderWorklet extends AudioWorkletProcessor {
+                constructor() {
+                    super();
+                    this.bufferSize = ${22050 * 60 * 15};
+                    this.buffer = new Int16Array(this.bufferSize);
+                    this.writePtr = 0;
+                    this.isFull = false;
+                    this.port.onmessage = (e) => {
+                        if (e.data.type === 'GET_CLIP') {
+                            const samples = e.data.samples;
+                            const clip = new Int16Array(samples);
+                            let ptr = this.writePtr;
+                            for (let i = samples - 1; i >= 0; i--) {
+                                ptr = (ptr - 1 + this.bufferSize) % this.bufferSize;
+                                clip[i] = this.buffer[ptr];
+                            }
+                            this.port.postMessage({ type: 'CLIP_DATA', data: clip });
+                        }
+                    };
+                }
+                process(inputs) {
+                    const input = inputs[0][0];
+                    if (input) {
+                        for (let i = 0; i < input.length; i++) {
+                            const s = Math.max(-1, Math.min(1, input[i]));
+                            this.buffer[this.writePtr] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+                            this.writePtr = (this.writePtr + 1) % this.bufferSize;
+                            if (this.writePtr === 0) this.isFull = true;
+                        }
+                        if (this.writePtr % 2048 === 0) {
+                            this.port.postMessage({ type: 'STATUS', ptr: this.writePtr, full: this.isFull });
+                        }
+                    }
+                    return true;
+                }
+            }
+            registerProcessor('recorder-worklet', RecorderWorklet);
+        `;
+
         const TARGET_SR = 22050;
-        const MAX_MIN = 15;
-        const MAX_SAMPLES = TARGET_SR * 60 * MAX_MIN;
-        
-        let ringBuffer = new Int16Array(MAX_SAMPLES);
-        let writePtr = 0;
-        let isFull = false;
-        let isBuffering = false; // "Recording" to memory
-        let isMonitoring = false; // "Live Waveform" active
-        
-        let audioCtx, stream, processor, analyser, wakeLock, startTime;
+        let audioCtx, workletNode, analyser, wakeLock, startTime;
+        let isActive = false;
         let pendingClipData = null;
 
         const el = {
-            initBtn: document.getElementById('init-btn'),
-            recordBtn: document.getElementById('record-btn'),
+            masterBtn: document.getElementById('master-btn'),
+            statusIcon: document.getElementById('status-icon'),
             timer: document.getElementById('timer'),
             canvas: document.getElementById('waveform'),
             bufferBar: document.getElementById('buffer-progress'),
             bufferStat: document.getElementById('buffer-stat'),
             historyList: document.getElementById('history-list'),
             modal: document.getElementById('modal'),
-            input: document.getElementById('filename-input'),
-            statusIcon: document.getElementById('status-icon'),
-            monitorLabel: document.getElementById('monitor-label'),
-            silentAudio: document.getElementById('silent-audio')
+            input: document.getElementById('filename-input')
         };
 
         const ctx = el.canvas.getContext('2d');
         lucide.createIcons();
 
-        // Initialize Monitoring (First user interaction)
-        el.initBtn.onclick = async () => {
-            try {
-                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-                stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                el.silentAudio.play();
+        function startSilentOutput(audioCtx) {
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.frequency.setValueAtTime(1, audioCtx.currentTime);
+            gain.gain.setValueAtTime(0.001, audioCtx.currentTime);
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            osc.start();
+        }
 
+        async function initSystem() {
+            try {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: TARGET_SR });
+                const blob = new Blob([workletCode], { type: 'application/javascript' });
+                const url = URL.createObjectURL(blob);
+                await audioCtx.audioWorklet.addModule(url);
+
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } 
+                });
+
+                startSilentOutput(audioCtx);
                 const source = audioCtx.createMediaStreamSource(stream);
                 analyser = audioCtx.createAnalyser();
                 analyser.fftSize = 256;
                 
-                processor = audioCtx.createScriptProcessor(4096, 1, 1);
-                const nativeSR = audioCtx.sampleRate;
-                const ratio = nativeSR / TARGET_SR;
-                let count = 0;
-
-                processor.onaudioprocess = (e) => {
-                    // Always process for analyser even if not buffering
-                    if (!isBuffering) return;
-
-                    const input = e.inputBuffer.getChannelData(0);
-                    for (let i = 0; i < input.length; i++) {
-                        count++;
-                        if (count >= ratio) {
-                            const s = Math.max(-1, Math.min(1, input[i]));
-                            ringBuffer[writePtr] = s < 0 ? s * 0x8000 : s * 0x7FFF;
-                            writePtr = (writePtr + 1) % MAX_SAMPLES;
-                            if (writePtr === 0) isFull = true;
-                            count -= ratio;
-                        }
+                workletNode = new AudioWorkletNode(audioCtx, 'recorder-worklet');
+                workletNode.port.onmessage = (e) => {
+                    if (e.data.type === 'STATUS') updateUI(e.data.ptr, e.data.full);
+                    if (e.data.type === 'CLIP_DATA') {
+                        pendingClipData = e.data.data;
+                        el.input.value = `Clip_${new Date().toLocaleTimeString().replace(/:/g,'-')}`;
+                        el.modal.classList.remove('hidden');
                     }
                 };
 
                 source.connect(analyser);
-                source.connect(processor);
-                processor.connect(audioCtx.destination);
+                source.connect(workletNode);
+                workletNode.connect(audioCtx.destination);
 
-                isMonitoring = true;
-                el.initBtn.classList.add('hidden');
-                el.recordBtn.classList.remove('hidden');
-                el.statusIcon.classList.add('bg-blue-500', 'monitor-glow');
-                el.statusIcon.innerHTML = `<i data-lucide="mic" class="w-6 h-6"></i>`;
-                el.monitorLabel.classList.remove('hidden');
+                isActive = true;
+                startTime = Date.now();
+                el.masterBtn.innerHTML = `<i data-lucide="square" class="fill-current"></i> システム停止`;
+                el.masterBtn.className = "w-full py-6 bg-slate-800 rounded-[2.5rem] font-black text-xl shadow-xl active:scale-95 transition-all flex items-center justify-center gap-3 border border-white/10 text-red-500";
+                el.timer.classList.remove('hidden');
+                document.getElementById('clip-controls').classList.remove('hidden');
+                el.statusIcon.classList.replace('bg-slate-800', 'bg-red-600');
+                el.statusIcon.classList.add('recording-ring');
+                el.statusIcon.innerHTML = `<i data-lucide="mic" class="w-6 h-6 animate-pulse"></i>`;
                 
+                if ('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen');
                 requestAnimationFrame(drawLoop);
                 lucide.createIcons();
             } catch (err) {
-                console.error(err);
-                alert("マイク許可が必要だよ");
+                alert("マイク許可またはブラウザの制限により起動できませんでした。");
             }
+        }
+
+        el.masterBtn.onclick = () => {
+            if (!isActive) initSystem();
+            else location.reload();
         };
 
-        // Toggle Buffering (The actual recording)
-        el.recordBtn.onclick = () => {
-            if (!isBuffering) {
-                isBuffering = true;
-                startTime = Date.now();
-                el.recordBtn.innerHTML = `<i data-lucide="square" class="fill-current"></i> バッファ録音を停止`;
-                el.recordBtn.classList.replace('bg-slate-800', 'bg-red-600');
-                el.timer.classList.remove('hidden');
-                document.getElementById('clip-controls').classList.remove('hidden');
-                el.statusIcon.classList.replace('bg-blue-500', 'bg-red-500');
-                el.statusIcon.classList.replace('monitor-glow', 'recording-glow');
-                if ('wakeLock' in navigator) navigator.wakeLock.request('screen');
-            } else {
-                // To keep monitor alive, we just stop buffering and reset counters
-                isBuffering = false;
-                writePtr = 0;
-                isFull = false;
-                el.recordBtn.innerHTML = `<i data-lucide="circle" class="fill-red-500"></i> バッファ録音を再開`;
-                el.recordBtn.classList.replace('bg-red-600', 'bg-slate-800');
-                el.timer.classList.add('hidden');
-                el.statusIcon.classList.replace('bg-red-500', 'bg-blue-500');
-                el.statusIcon.classList.replace('recording-glow', 'monitor-glow');
-            }
-            lucide.createIcons();
-        };
+        function updateUI(ptr, isFull) {
+            const currentSamples = isFull ? (TARGET_SR * 60 * 15) : ptr;
+            const sec = Math.floor(currentSamples / TARGET_SR);
+            el.bufferBar.style.width = `${(currentSamples / (TARGET_SR * 60 * 15)) * 100}%`;
+            el.bufferStat.innerText = `${formatTime(sec)} / 15:00`;
+            el.timer.innerText = formatTime(Math.floor((Date.now() - startTime) / 1000));
+        }
 
         function drawLoop() {
+            if (!isActive) return;
             requestAnimationFrame(drawLoop);
-            const dataArray = new Uint8Array(analyser.frequencyBinCount);
-            analyser.getByteTimeDomainData(dataArray);
-
+            const data = new Uint8Array(analyser.frequencyBinCount);
+            analyser.getByteTimeDomainData(data);
             ctx.clearRect(0, 0, el.canvas.width, el.canvas.height);
-            ctx.strokeStyle = isBuffering ? '#ef4444' : '#3b82f6';
-            ctx.lineWidth = 4;
+            ctx.strokeStyle = '#3b82f6';
+            ctx.lineWidth = 5;
             ctx.beginPath();
-            const sliceWidth = el.canvas.width / dataArray.length;
-            let x = 0;
-            for(let i=0; i<dataArray.length; i++) {
-                const v = dataArray[i]/128.0;
-                const y = v * el.canvas.height/2;
-                if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
-                x += sliceWidth;
+            const sw = el.canvas.width / data.length;
+            for(let i=0; i<data.length; i++) {
+                const y = (data[i]/128.0) * el.canvas.height/2;
+                if(i===0) ctx.moveTo(i*sw, y); else ctx.lineTo(i*sw, y);
             }
             ctx.stroke();
-
-            if (isBuffering) {
-                const elapsed = Math.floor((Date.now() - startTime) / 1000);
-                el.timer.innerText = formatTime(elapsed);
-                const currentSamples = isFull ? MAX_SAMPLES : writePtr;
-                el.bufferBar.style.width = `${(currentSamples / MAX_SAMPLES) * 100}%`;
-                el.bufferStat.innerText = formatTime(Math.floor(currentSamples / TARGET_SR));
-            }
         }
 
         function formatTime(s) {
             return `${Math.floor(s/60)}:${(s%60).toString().padStart(2,'0')}`;
         }
 
-        // --- Clipping Logic ---
         document.querySelectorAll('.clip-btn').forEach(btn => {
             btn.onclick = () => {
-                const sec = parseInt(btn.dataset.sec);
-                const numSamples = sec * TARGET_SR;
-                const available = isFull ? MAX_SAMPLES : writePtr;
-                const actual = Math.min(numSamples, available);
-                
-                pendingClipData = new Int16Array(actual);
-                let ptr = writePtr;
-                for (let i = actual - 1; i >= 0; i--) {
-                    ptr = (ptr - 1 + MAX_SAMPLES) % MAX_SAMPLES;
-                    pendingClipData[i] = ringBuffer[ptr];
-                }
-                
-                el.input.value = `Clip_${new Date().toLocaleTimeString().replace(/:/g,'-')}`;
-                el.modal.classList.remove('hidden');
+                const samples = parseInt(btn.dataset.sec) * TARGET_SR;
+                workletNode.port.postMessage({ type: 'GET_CLIP', samples: samples });
             };
         });
 
         document.getElementById('confirm-save').onclick = () => {
             const blob = encodeWAV16(pendingClipData, TARGET_SR);
             const url = URL.createObjectURL(blob);
-            addHistory(el.input.value, url, Math.round(pendingClipData.length/TARGET_SR), (blob.size/1024/1024).toFixed(1));
+            addHistory(el.input.value, url, Math.round(pendingClipData.length/TARGET_SR));
             el.modal.classList.add('hidden');
         };
 
         document.getElementById('cancel-save').onclick = () => el.modal.classList.add('hidden');
 
-        function addHistory(name, url, dur, mb) {
+        function addHistory(name, url, dur) {
             const item = document.createElement('div');
-            item.className = "bg-slate-900 p-5 rounded-[2rem] border border-slate-800 shadow-xl animate-in zoom-in duration-300";
+            item.className = "bg-slate-900/80 backdrop-blur-sm p-6 rounded-[2.5rem] border border-white/5 shadow-xl animate-in slide-in-from-bottom-4 duration-500";
             item.innerHTML = `
                 <div class="flex justify-between items-start mb-4">
                     <div>
                         <h4 class="font-bold text-blue-400 text-lg">${name}</h4>
-                        <p class="text-[10px] text-slate-500 font-black uppercase">${dur}s / ${mb}MB</p>
+                        <p class="text-[10px] text-slate-500 font-black uppercase tracking-widest">${dur}s • ${new Date().toLocaleTimeString()}</p>
                     </div>
                     <button class="text-slate-700 hover:text-red-500 transition-colors delete-btn"><i data-lucide="trash-2"></i></button>
                 </div>
                 <div class="flex items-center gap-4">
-                    <audio src="${url}" controls class="flex-1 h-10 invert brightness-200 opacity-60"></audio>
-                    <a href="${url}" download="${name}.wav" class="p-4 bg-slate-800 rounded-2xl text-blue-400"><i data-lucide="download"></i></a>
+                    <audio src="${url}" controls class="flex-1 h-10 invert brightness-200 opacity-40"></audio>
+                    <a href="${url}" download="${name}.wav" class="p-4 bg-blue-600/10 text-blue-500 rounded-2xl"><i data-lucide="download"></i></a>
                 </div>
             `;
             el.historyList.prepend(item);
