@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>V-BUFFER Pro</title>
+    <title>V-BUFFER Ultra</title>
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <link rel="apple-touch-icon" href="https://cdn-icons-png.flaticon.com/512/1082/1082844.png">
@@ -50,12 +50,12 @@
             <button id="master-btn" class="w-full py-6 bg-blue-600 rounded-[2.5rem] font-black text-xl shadow-xl active:scale-95 transition-all flex items-center justify-center gap-3">
                 <i data-lucide="power"></i> システム起動
             </button>
-            <p id="hint" class="text-center text-[10px] text-slate-500 font-bold uppercase tracking-tighter">
-                ※ スイッチをオンにしてマイクを許可して。
+            <p class="text-center text-[10px] text-slate-500 font-bold uppercase tracking-tighter">
+                ※ PWA版で止まる場合は、Safariのタブで試して。
             </p>
         </div>
 
-        <div id="clip-controls" class="hidden grid grid-cols-3 gap-3 animate-in fade-in zoom-in duration-500">
+        <div id="clip-controls" class="hidden grid grid-cols-3 gap-3">
             <button data-sec="15" class="clip-btn py-5 bg-slate-900 border border-white/5 rounded-3xl font-black text-xs hover:bg-slate-800 active:bg-blue-600 transition-all">15s</button>
             <button data-sec="30" class="clip-btn py-5 bg-slate-900 border border-white/5 rounded-3xl font-black text-xs hover:bg-slate-800 active:bg-blue-600 transition-all">30s</button>
             <button data-sec="60" class="clip-btn py-5 bg-slate-900 border border-white/5 rounded-3xl font-black text-xs hover:bg-slate-800 active:bg-blue-600 transition-all">1m</button>
@@ -65,15 +65,15 @@
         </div>
 
         <div id="history-container" class="space-y-4 pb-20">
-            <h2 class="text-[10px] font-black text-slate-600 uppercase tracking-widest ml-2">Clip History</h2>
             <div id="history-list" class="space-y-4"></div>
         </div>
     </main>
 
+    <!-- Save Modal -->
     <div id="modal" class="fixed inset-0 bg-slate-950/95 backdrop-blur-2xl flex items-center justify-center p-8 z-50 hidden">
         <div class="bg-slate-900 border border-white/10 rounded-[3.5rem] w-full max-w-sm p-10 shadow-2xl">
-            <h3 class="text-2xl font-black mb-2 text-blue-500">Captured</h3>
-            <p class="text-slate-400 text-sm mb-8">名前をつけて保存してね。</p>
+            <h3 class="text-2xl font-black mb-1">Captured</h3>
+            <p id="clip-info" class="text-slate-400 text-sm mb-6"></p>
             <input id="filename-input" type="text" class="w-full p-5 bg-slate-950 border border-white/10 rounded-3xl mb-8 outline-none text-lg">
             <div class="flex gap-4">
                 <button id="cancel-save" class="flex-1 py-5 bg-slate-800 rounded-3xl font-bold">Discard</button>
@@ -82,8 +82,12 @@
         </div>
     </div>
 
+    <!-- Background Audio Hack: Very long silent audio -->
+    <audio id="silent-audio" loop preload="auto">
+        <source src="data:audio/wav;base64,UklGRigAAABXQVZFRm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQQAAAAAAP8=">
+    </audio>
+
     <script>
-        // Worklet logic - Dynamic sample rate support
         const generateWorklet = (sampleRate) => `
             class RecorderWorklet extends AudioWorkletProcessor {
                 constructor() {
@@ -102,21 +106,18 @@
                                 ptr = (ptr - 1 + this.bufferSize) % this.bufferSize;
                                 clip[i] = this.buffer[ptr];
                             }
-                            this.port.postMessage({ type: 'CLIP_DATA', data: clip, sr: ${sampleRate} });
+                            this.port.postMessage({ type: 'CLIP_DATA', data: clip });
                         }
                     };
                 }
                 process(inputs) {
-                    const input = inputs[0];
-                    if (input && input.length > 0) {
-                        const channel = input[0];
-                        if (channel) {
-                            for (let i = 0; i < channel.length; i++) {
-                                const s = Math.max(-1, Math.min(1, channel[i]));
-                                this.buffer[this.writePtr] = s < 0 ? s * 0x8000 : s * 0x7FFF;
-                                this.writePtr = (this.writePtr + 1) % this.bufferSize;
-                                if (this.writePtr === 0) this.isFull = true;
-                            }
+                    const channel = inputs[0]?.[0];
+                    if (channel) {
+                        for (let i = 0; i < channel.length; i++) {
+                            const s = Math.max(-1, Math.min(1, channel[i]));
+                            this.buffer[this.writePtr] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+                            this.writePtr = (this.writePtr + 1) % this.bufferSize;
+                            if (this.writePtr === 0) this.isFull = true;
                         }
                         if (this.writePtr % 2048 === 0) {
                             this.port.postMessage({ type: 'STATUS', ptr: this.writePtr, full: this.isFull });
@@ -128,7 +129,7 @@
             registerProcessor('recorder-worklet', RecorderWorklet);
         `;
 
-        let audioCtx, workletNode, analyser, wakeLock, startTime;
+        let audioCtx, workletNode, analyser, startTime;
         let isActive = false;
         let pendingClipData = null;
         let actualSampleRate = 44100;
@@ -142,39 +143,42 @@
             bufferStat: document.getElementById('buffer-stat'),
             historyList: document.getElementById('history-list'),
             modal: document.getElementById('modal'),
-            input: document.getElementById('filename-input')
+            input: document.getElementById('filename-input'),
+            silentAudio: document.getElementById('silent-audio')
         };
 
         const ctx = el.canvas.getContext('2d');
         lucide.createIcons();
 
-        function startSilentOutput(audioCtx) {
-            const osc = audioCtx.createOscillator();
-            const gain = audioCtx.createGain();
-            osc.frequency.setValueAtTime(1, audioCtx.currentTime);
-            gain.gain.setValueAtTime(0.001, audioCtx.currentTime);
-            osc.connect(gain);
-            gain.connect(audioCtx.destination);
-            osc.start();
-        }
+        // Resume AudioContext on visibility change
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible' && audioCtx) {
+                if (audioCtx.state === 'suspended' || audioCtx.state === 'interrupted') {
+                    audioCtx.resume();
+                }
+            }
+        });
 
         async function initSystem() {
             try {
-                // DON'T force sampleRate on iOS. Use native.
                 audioCtx = new (window.AudioContext || window.webkitAudioContext)();
                 if (audioCtx.state === 'suspended') await audioCtx.resume();
                 
                 actualSampleRate = audioCtx.sampleRate;
-                
                 const blob = new Blob([generateWorklet(actualSampleRate)], { type: 'application/javascript' });
-                const url = URL.createObjectURL(blob);
-                await audioCtx.audioWorklet.addModule(url);
+                await audioCtx.audioWorklet.addModule(URL.createObjectURL(blob));
 
                 const stream = await navigator.mediaDevices.getUserMedia({ 
-                    audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } 
+                    audio: { 
+                        echoCancellation: false, 
+                        noiseSuppression: false, 
+                        autoGainControl: false 
+                    } 
                 });
 
-                startSilentOutput(audioCtx);
+                // Start physical audio playback to keep session alive
+                el.silentAudio.play().catch(e => console.error("Playback failed", e));
+
                 const source = audioCtx.createMediaStreamSource(stream);
                 analyser = audioCtx.createAnalyser();
                 analyser.fftSize = 256;
@@ -184,6 +188,7 @@
                     if (e.data.type === 'STATUS') updateUI(e.data.ptr, e.data.full);
                     if (e.data.type === 'CLIP_DATA') {
                         pendingClipData = e.data.data;
+                        document.getElementById('clip-info').innerText = `過去 ${Math.round(pendingClipData.length/actualSampleRate)}秒 を抽出。`;
                         el.input.value = `Clip_${new Date().toLocaleTimeString().replace(/:/g,'-')}`;
                         el.modal.classList.remove('hidden');
                     }
@@ -195,6 +200,7 @@
 
                 isActive = true;
                 startTime = Date.now();
+                
                 el.masterBtn.innerHTML = `<i data-lucide="square" class="fill-current"></i> システム停止`;
                 el.masterBtn.className = "w-full py-6 bg-slate-800 rounded-[2.5rem] font-black text-xl shadow-xl active:scale-95 transition-all flex items-center justify-center gap-3 border border-white/10 text-red-500";
                 el.timer.classList.remove('hidden');
@@ -203,12 +209,10 @@
                 el.statusIcon.classList.add('recording-ring');
                 el.statusIcon.innerHTML = `<i data-lucide="mic" class="w-6 h-6 animate-pulse"></i>`;
                 
-                if ('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen');
                 requestAnimationFrame(drawLoop);
                 lucide.createIcons();
             } catch (err) {
-                console.error(err);
-                alert("エラー: マイクにアクセスできないか、システムを起動できませんでした。");
+                alert("マイク許可が必要です");
             }
         }
 
@@ -222,7 +226,10 @@
             const sec = Math.floor(currentSamples / actualSampleRate);
             el.bufferBar.style.width = `${(currentSamples / (actualSampleRate * 60 * 15)) * 100}%`;
             el.bufferStat.innerText = `${formatTime(sec)} / 15:00`;
-            el.timer.innerText = formatTime(Math.floor((Date.now() - startTime) / 1000));
+            
+            // Recalculate timer based on Date.now() for background catch-up
+            const realElapsed = Math.floor((Date.now() - startTime) / 1000);
+            el.timer.innerText = formatTime(realElapsed);
         }
 
         function drawLoop() {
@@ -248,8 +255,7 @@
 
         document.querySelectorAll('.clip-btn').forEach(btn => {
             btn.onclick = () => {
-                const sec = parseInt(btn.dataset.sec);
-                workletNode.port.postMessage({ type: 'GET_CLIP', sec: sec });
+                workletNode.port.postMessage({ type: 'GET_CLIP', sec: parseInt(btn.dataset.sec) });
             };
         });
 
@@ -269,9 +275,9 @@
                 <div class="flex justify-between items-start mb-4">
                     <div>
                         <h4 class="font-bold text-blue-400 text-lg">${name}</h4>
-                        <p class="text-[10px] text-slate-500 font-black uppercase tracking-widest">${dur}s • ${new Date().toLocaleTimeString()}</p>
+                        <p class="text-[10px] text-slate-500 font-black uppercase">${dur}s • ${new Date().toLocaleTimeString()}</p>
                     </div>
-                    <button class="text-slate-700 hover:text-red-500 transition-colors delete-btn"><i data-lucide="trash-2"></i></button>
+                    <button class="text-slate-700 hover:text-red-500 delete-btn"><i data-lucide="trash-2"></i></button>
                 </div>
                 <div class="flex items-center gap-4">
                     <audio src="${url}" controls class="flex-1 h-10 invert brightness-200 opacity-40"></audio>
